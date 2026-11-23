@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packet Sniffer Replay</title>
+<link rel="stylesheet" href="style.css">
+<script defer src="trace.js"></script>
+<script defer src="replay.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Network Traffic Replay</h1>
+      <p>Review a Linux interface recording or a sample trace. Find a spike on the timeline, then inspect packet counts by IP protocol.</p>
+    </div>
+    <output id="state" aria-live="polite">Ready</output>
+  </header>
+
+  <section id="guided-replay" class="panel guided" aria-labelledby="guide-title">
+    <h2 id="guide-title">Investigate a traffic spike</h2>
+    <p>Start with normal traffic, then jump to a TCP or UDP burst in the sample.</p>
+    <div class="jump-controls">
+      <button id="baseline" type="button">View baseline</button>
+      <button id="tcp-burst" type="button">Jump to TCP burst</button>
+      <button id="udp-burst" type="button">Jump to UDP burst</button>
+    </div>
+    <p id="finding" role="status"></p>
+  </section>
+
+  <section class="controls" aria-label="Playback controls">
+    <button id="play" type="button">Play</button>
+    <button id="reset" type="button">Reset</button>
+    <label for="speed">Speed <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+    <label class="timeline" for="position">Timeline <input id="position" type="range" min="0" value="0" step="1"></label>
+    <span id="time" class="mono"></span>
+  </section>
+
+  <div class="trace-controls">
+    <p class="source-label"><strong>Recording</strong> <span id="recording-name">Bundled synthetic trace</span></p>
+    <label for="metrics-file">Open metrics file</label>
+    <input id="metrics-file" type="file" accept=".jsonl,.ndjson,application/x-ndjson">
+    <button id="sample" type="button" hidden>Use sample trace</button>
+    <span id="trace-message" role="status"></span>
+  </div>
+
+  <div class="interval-heading">
+    <h2>Selected interval</h2>
+    <p id="interval">Select a point on the timeline or press Play.</p>
+  </div>
+  <dl class="metrics">
+    <div><dt>IP throughput</dt><dd id="rate">0.00 <small>Mb/s</small></dd></div>
+    <div><dt>Packet rate</dt><dd id="pps">0 <small>packets/s</small></dd></div>
+    <div><dt>Decoded packets through selection</dt><dd id="total">0</dd></div>
+  </dl>
+
+  <div class="panels">
+    <section class="panel" aria-labelledby="throughput">
+      <div class="panel-title">
+        <h2 id="throughput">Decoded IP throughput (Mb/s)</h2>
+        <button id="peak" type="button">Jump to peak rate</button>
+      </div>
+      <canvas id="chart" role="img" aria-label="Line chart of decoded IP megabits per second over replay time"></canvas>
+    </section>
+    <section class="panel" aria-labelledby="mix">
+      <h2 id="mix">Packets by IP protocol</h2>
+      <p id="top-protocol" class="hint">Select an interval to see its protocol breakdown.</p>
+      <ul id="protocols"></ul>
+      <div id="application-panel">
+        <h3 id="applications-title">Application traffic</h3>
+        <p class="hint">Labels from the synthetic trace</p>
+        <ul id="applications" aria-labelledby="applications-title"></ul>
+      </div>
+    </section>
+  </div>
+  <p class="note">The bundled trace uses one-second bins of synthetic traffic. Rates follow replay time so changing playback speed leaves the reported rates consistent. IP throughput includes decoded headers and payloads.</p>
+  <details class="panel run-guide">
+    <summary>Compare worker queue sizes</summary>
+    <p>Five Google Benchmark repetitions per setting, with one reader and three
+    workers replaying synthetic packets in metrics-only mode.</p>
+    <div class="comparison-scroll">
+      <table>
+        <thead><tr><th scope="col">Packets per queue</th><th scope="col">Packets/s</th><th scope="col">p95 handoff latency</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">64 (default)</th><td>900,326</td><td>39.3 µs</td></tr>
+          <tr><th scope="row">256</th><td>1,091,025</td><td>123.9 µs</td></tr>
+          <tr><th scope="row">1,024</th><td>1,129,427</td><td>127.6 µs</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The 256-packet queue processed 21% more packets per second. The default
+    stayed at 64 because it had the lowest p95 time from packet read to decode.</p>
+  </details>
+  <details class="panel run-guide">
+    <summary>Run locally</summary>
+    <h3>Play the bundled demo</h3>
+    <p>Press <strong>Play</strong> above. The bundled trace runs offline in a browser on Linux, Windows, or macOS.</p>
+
+    <h3>Build the sniffer and replay a capture</h3>
+    <p>From the repository root on Linux, use GNU Make, a C++14 compiler, and Python 3.</p>
+    <pre><code>cd projects/packet-sniffer
+make
+python3 benchmarks/replay.py --write-pcap sample.pcap
+./cpp-sniffer --threaded --metrics-only --pcap sample.pcap &gt; capture.jsonl</code></pre>
+    <p>Choose <strong>Open metrics file</strong> above and select <code>capture.jsonl</code>. A fast offline replay may produce just one interval.</p>
+
+    <h3>What capture threads mean</h3>
+    <p>The count includes one reader plus any decode workers. With <code>cpus = 1</code>, the reader also decodes. With <code>cpus = 4</code>, one thread reads and three workers decode. The <code>--threaded</code> command above uses one reader and one worker. Metrics-only mode adds a reporting thread. Threaded packet-line output adds a writer thread. Both are outside this count.</p>
+
+    <h3>Record live loopback traffic on Linux</h3>
+    <p>Run <code>sudo ./cpp-sniffer lo</code> to see throughput, packet totals, and protocol counts in the terminal about once per second. Use the command below to save dashboard metrics.</p>
+    <p>Run this command from the packet-sniffer directory. Generate traffic with <code>ping -c 5 127.0.0.1</code> in another terminal, then press <kbd>Ctrl</kbd>+<kbd>C</kbd> to finish the recording.</p>
+    <pre><code>sudo ./cpp-sniffer --threaded --metrics-only lo &gt; loopback.jsonl</code></pre>
+    <p>Open <code>loopback.jsonl</code> in the dashboard to replay the recording.</p>
+  </details>
+</main>
+</body>
+</html>
